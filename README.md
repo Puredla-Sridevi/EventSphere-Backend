@@ -47,7 +47,7 @@ EventSphere is a backend-focused event ticket booking system built using Spring 
 - Spring Boot
 - Spring Security (JWT)
 - Hibernate (JPA)
-- MySQL
+- PostgresSQL
 - AOP
 - Scheduler
 
