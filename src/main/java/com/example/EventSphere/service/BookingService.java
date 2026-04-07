@@ -1,23 +1,19 @@
 package com.example.EventSphere.service;
 
+import com.example.EventSphere.entity.*;
 import com.example.EventSphere.enums.EventStatus;
 import com.example.EventSphere.enums.BookingStatus;
 import com.example.EventSphere.dtos.BookingResponseDto;
 import com.example.EventSphere.dtos.MailDto;
-import com.example.EventSphere.entity.Booking;
-import com.example.EventSphere.entity.Event;
-import com.example.EventSphere.entity.SeatLock;
-import com.example.EventSphere.entity.Users;
 import com.example.EventSphere.enums.PaymentStatus;
-import com.example.EventSphere.repo.BookingRepository;
-import com.example.EventSphere.repo.EventRepository;
-import com.example.EventSphere.repo.SeatLockRepository;
-import com.example.EventSphere.repo.UserRepository;
+import com.example.EventSphere.repo.*;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.apache.coyote.BadRequestException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
@@ -25,24 +21,33 @@ import org.springframework.stereotype.Service;
 import java.nio.file.AccessDeniedException;
 import java.time.LocalDateTime;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
 public class BookingService {
+    private final IdempotencyRepo idempotencyRepo;
     private final  BookingRepository bookingRepository;
     private final EventRepository eventRepository;
     private final UserRepository userRepository;
     private final SeatLockRepository seatLockRepository;
     private final EmailService emailService;
     private  final PaymentService paymentService;
+    private final ObjectMapper objectMapper;
     private Authentication getAuthentication(){
         return SecurityContextHolder.getContext().getAuthentication();
     }
     @Transactional
-    public BookingResponseDto confirmBooking(int seatLockId) throws Exception {
+    public BookingResponseDto confirmBooking(int seatLockId,String idempotencykey) throws Exception {
 //        if(bookingRequestDto.getRequiredSeats()<=0){
 //            throw new BadRequestException("Required seats should be greater than 0");
 //        }
+        Optional<Idempotency> exists=idempotencyRepo.findByIdempotencyKey(idempotencykey);
+        if(!(exists.isEmpty())){
+          String storedResponse= exists.get().getResponse();
+          BookingResponseDto bookingResponseDto=objectMapper.readValue(storedResponse,BookingResponseDto.class);
+          return bookingResponseDto;
+        }
         SeatLock seatLock=seatLockRepository.findById(seatLockId).orElseThrow(()->new NoSuchElementException("No Reservation done with Id: "+seatLockId));
         if(! seatLock.getUser().getEmail().equals(getAuthentication().getName())){
             throw new AccessDeniedException("You Are Not Allowed To Confirm It");
@@ -69,6 +74,7 @@ public class BookingService {
                 .build();
         booking.setTotalPrice(price);
         Booking savedBooking=bookingRepository.save(booking);
+
         emailService.sendBookingConfirmation(
                 MailDto.builder()
                         .toEmail(user.getEmail())
@@ -78,7 +84,7 @@ public class BookingService {
                         .build()
         );
         seatLockRepository.deleteById(seatLockId);
-        return BookingResponseDto.builder()
+        BookingResponseDto responseDto= BookingResponseDto.builder()
                 .bookingId(savedBooking.getBookingId())
                 .bookingtime(savedBooking.getBookingTime())
                 .eventTitle(savedBooking.getEvent().getEventTitle())
@@ -87,6 +93,21 @@ public class BookingService {
                 .userEmail(savedBooking.getUsers().getEmail())
                 .price(savedBooking.getTotalPrice())
                 .build();
+        try{
+            Idempotency idempotency=Idempotency.builder()
+                    .idempotencyKey(idempotencykey)
+                    .status(200)
+                    .response(objectMapper.writeValueAsString(responseDto))
+                    .build();
+            idempotencyRepo.save(idempotency);
+        }catch(Exception e){
+            Optional<Idempotency> existing=idempotencyRepo.findByIdempotencyKey(idempotencykey);
+            if(existing.isPresent()){
+                return objectMapper.readValue(existing.get().getResponse(),BookingResponseDto.class);
+            }
+        }
+
+        return responseDto;
     }
     public Page<BookingResponseDto> getMyEvents(int pageNo, int pageSize){
         Users users=userRepository.findByEmail(getAuthentication().getName()).orElseThrow(()->new UsernameNotFoundException("User Not Found"));
