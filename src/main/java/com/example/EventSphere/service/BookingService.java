@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.apache.coyote.BadRequestException;
+import org.springframework.cache.annotation.CachePut;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
@@ -34,6 +35,7 @@ public class BookingService {
     private final EmailService emailService;
     private  final PaymentService paymentService;
     private final ObjectMapper objectMapper;
+    private final RateLimiterService rateLimiterService;
     private Authentication getAuthentication(){
         return SecurityContextHolder.getContext().getAuthentication();
     }
@@ -42,13 +44,20 @@ public class BookingService {
 //        if(bookingRequestDto.getRequiredSeats()<=0){
 //            throw new BadRequestException("Required seats should be greater than 0");
 //        }
+
+        String key="rate_limit_user_"+getAuthentication().getName();
+
+
         Optional<Idempotency> exists=idempotencyRepo.findByIdempotencyKey(idempotencykey);
         if(!(exists.isEmpty())){
           String storedResponse= exists.get().getResponse();
           BookingResponseDto bookingResponseDto=objectMapper.readValue(storedResponse,BookingResponseDto.class);
           return bookingResponseDto;
         }
-        SeatLock seatLock=seatLockRepository.findById(seatLockId).orElseThrow(()->new NoSuchElementException("No Reservation done with Id: "+seatLockId));
+        if(!rateLimiterService.isAllowed(key)){
+            throw new RuntimeException("Too many requests. Try again after some time.");
+        }
+               SeatLock seatLock=seatLockRepository.findById(seatLockId).orElseThrow(()->new NoSuchElementException("No Reservation done with Id: "+seatLockId));
         if(! seatLock.getUser().getEmail().equals(getAuthentication().getName())){
             throw new AccessDeniedException("You Are Not Allowed To Confirm It");
         }

@@ -10,6 +10,10 @@ import com.example.EventSphere.repo.EventRepository;
 import com.example.EventSphere.repo.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.apache.coyote.BadRequestException;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.CachePut;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -31,7 +35,14 @@ public class EventService {
     public Authentication getAuthentication(){
         return SecurityContextHolder.getContext().getAuthentication();
     }
-
+    @Caching(
+            put={
+                    @CachePut(value = "EVENT_CACHE",key = "'event_'+#result.id")
+            },
+            evict={
+                    @CacheEvict(value = "EVENT_LIST_CACHE", allEntries = true)
+            }
+    )
     public EventResponseDto createEvent(EventRequestDto eventRequestDto) throws BadRequestException {
          if(eventRequestDto.getTitle()==null){
              throw new IllegalArgumentException("Title is Empty");
@@ -57,7 +68,6 @@ public class EventService {
                  .createdBy(user)
                  .price(eventRequestDto.getPrice())
                  .build();
-          event.setCreatedBy(user);
          eventRepository.save(event);
          return EventResponseDto.builder()
                  .id(event.getEventId())
@@ -74,7 +84,9 @@ public class EventService {
                  .build();
     }
 
-
+    @Cacheable(
+            value = "EVENT_LIST_CACHE",
+            key = "'page:' + #pageNo + ':size:' + #pageSize + ':loc:' + #location + ':min:' + #minPrice + ':max:' + #maxPrice + ':status:' + #eventStatus + ':sort:' + #sortBy + ':dir:' + #direction"    )
     public Page<EventResponseDto> getAllEvents(int pageNo, int pageSize,String location, Double minPrice, Double maxPrice, EventStatus eventStatus, String sortBy, String direction) {
         Specification<Event> specification=eventSpecification.filterEvents(location,minPrice,maxPrice,eventStatus);
         Sort sort= Sort.by(sortBy != null ? sortBy :"eventDate");
@@ -98,8 +110,9 @@ public class EventService {
                     .createdBy(event.getCreatedBy().getEmail())
                     .build());
     }
-
+    @Cacheable(value="EVENT_CACHE",key="'event_'+#id")
     public EventResponseDto getEventById(int id) {
+        System.out.println("Fetching from DB");
         Event event=eventRepository.findById(id).orElseThrow(()->new RuntimeException("Event Not Found with id : "+id));
      return   EventResponseDto.builder()
                 .id(event.getEventId())
@@ -115,7 +128,14 @@ public class EventService {
                 .createdBy(event.getCreatedBy().getEmail())
                 .build();
     }
-
+    @Caching(
+        put={
+        @CachePut(value = "EVENT_CACHE",key = "'event_'+#result.id")
+        },
+        evict={
+        @CacheEvict(value = "EVENT_LIST_CACHE", allEntries = true)
+        }
+    )
     public EventResponseDto updateEvent(int id, EventRequestDto requestDto) {
           Event event=eventRepository.findById(id).orElseThrow(()->new NoSuchElementException("No Such Elemnt Found WIth Id: "+id));
           if(! (event.getCreatedBy().getEmail().equals(getAuthentication().getName())
@@ -140,8 +160,12 @@ public class EventService {
           event.setDescription(requestDto.getDescription());
           event.setLocation(requestDto.getLocation());
           event.setPrice(requestDto.getPrice());
-          event.setTotalSeats(requestDto.getTotalSeats());
-          event.setAvailableSeats(requestDto.getTotalSeats());
+          int bookedSeats=event.getTotalSeats()-event.getAvailableSeats();
+          if(requestDto.getTotalSeats()<bookedSeats){
+              throw new IllegalArgumentException("Total Seats cannot be less than already booked seats ");
+          }
+    event.setTotalSeats(requestDto.getTotalSeats());
+          event.setAvailableSeats(requestDto.getTotalSeats()-bookedSeats);
           Event event1 =eventRepository.save(event);
             return   EventResponseDto.builder()
                 .id(event1.getEventId())
@@ -157,8 +181,10 @@ public class EventService {
                 .createdBy(event1.getCreatedBy().getEmail())
                 .build();
     }
-
-    public EventResponseDto deleteEvent(int id) {
+    @Caching(evict = {
+            @CacheEvict(value = "EVENT_CACHE", key = "'event_'+#id"),
+            @CacheEvict(value = "EVENT_LIST_CACHE", allEntries = true)
+    })    public EventResponseDto deleteEvent(int id) {
         Event event=eventRepository.findById(id).orElseThrow(()->new NoSuchElementException("No Such Event With Id: "+id));
         if(! (event.getCreatedBy().getEmail().equals(getAuthentication().getName())
                 || getAuthentication().getAuthorities().stream().anyMatch(auth->auth.getAuthority().equals("ROLE_ADMIN")))){
