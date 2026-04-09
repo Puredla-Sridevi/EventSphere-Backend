@@ -41,10 +41,13 @@ It focuses on **scalability, reliability, and real-world backend challenges** li
 - Prevents duplicate bookings during retries
 - Ensures safe and consistent API behavior
 
-### 🚦 Rate Limiting (Advanced)
+
+- ### 🚦 Rate Limiting (Advanced)
 - Implemented **Sliding Window Rate Limiter using Redis Sorted Sets**
 - Prevents API abuse and booking spam
 - Per-user request control with time-based expiry
+- **Login rate limiting to prevent brute-force attacks**
+- Tracks only failed login attempts and resets on successful authentication
 
 ### 📊 Observability
 - AOP-based logging
@@ -88,7 +91,10 @@ It focuses on **scalability, reliability, and real-world backend challenges** li
 
 ---
 
-## ⚙️ How It Works (Booking Flow)
+## ⚙️ How It Works
 
-```text
+### 🎟️ Booking Flow
 Idempotency → Rate Limiting → Seat Lock → Payment → Booking Confirmation
+
+### 🔐 Login Flow
+Rate Limiting (failed attempts only) → Authentication → JWT Generation

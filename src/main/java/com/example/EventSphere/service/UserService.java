@@ -7,7 +7,7 @@ import com.example.EventSphere.dtos.UserRequestDto;
 import com.example.EventSphere.entity.Users;
 import com.example.EventSphere.repo.UserRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -18,6 +18,7 @@ public class UserService {
     private final JwtService jwtService;
     private final UserRepository userRepository;
     private final PasswordEncoder encoder;
+    private final RateLimiterService limiterService;
     public String registerUser(UserRequestDto requestDto){
         if( existsByEmail(requestDto.getEmail())){
            throw new RuntimeException("User Already Exists");
@@ -43,13 +44,29 @@ public class UserService {
         return userRepository.existsByEmail(email);
     }
     public String loginUser(UserLoginRequest loginRequest){
-        if( ! existsByEmail(loginRequest.getEmail())){
-           throw new UsernameNotFoundException("UserNotFound");
+
+//        if( ! existsByEmail(loginRequest.getEmail())){
+//           throw new UsernameNotFoundException("UserNotFound");
+//        }
+//        String key="loginlimituser_"+loginRequest.getEmail();
+//        if(!limiterService.isAllowed(key)){
+//            throw new IllegalArgumentException("You are Done IWth Your Login Attempts");
+//        }
+//        Users users=getUserByEmail(loginRequest.getEmail());
+//        if( ! encoder.matches(loginRequest.getPassword(),users.getPassword())){
+//            throw new AccessDeniedException("Invalid Password");
+//        }
+//       return jwtService.generateToken(users);
+        String key="loginlimituser_"+loginRequest.getEmail();
+        if(!limiterService.isLoginAllowed(key)){
+            throw new IllegalArgumentException("Too many login attempts. Try again later.");
         }
-        Users users=getUserByEmail(loginRequest.getEmail());
-        if( ! encoder.matches(loginRequest.getPassword(),users.getPassword())){
-            throw new AccessDeniedException("Invalid Password");
+        Users users=userRepository.findByEmail(loginRequest.getEmail()).orElse(null);
+        if( users==null || ! encoder.matches(loginRequest.getPassword(),users.getPassword())){
+            limiterService.recordFailure(key);
+            throw new BadCredentialsException("username Or Password is not correct");
         }
-       return jwtService.generateToken(users);
+        limiterService.reset(key);
+        return jwtService.generateToken(users);
     }
 }
